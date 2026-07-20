@@ -5,82 +5,215 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const app = express();
+
 app.use(cors());
-app.use(express.json({ limit: "1mb" }));
+
+// Fotoğraf Base64 olarak geleceği için limiti yükselttik.
+app.use(express.json({ limit: "15mb" }));
 
 if (!process.env.GEMINI_API_KEY) {
-  console.error("HATA: GEMINI_API_KEY .env dosyasında tanımlı değil.");
+  console.error("HATA: GEMINI_API_KEY tanımlı değil.");
   process.exit(1);
 }
 
+// Backend kontrol adresi
 app.get("/", (req, res) => {
-  res.json({ durum: "ok", mesaj: "ElektroAsistan Gemini Backend çalışıyor." });
+  res.json({
+    durum: "ok",
+    mesaj: "ElektroAsistan Gemini Backend çalışıyor."
+  });
 });
 
+// ARIZA ANALİZİ
 app.post("/api/ariza-analiz", async (req, res) => {
   try {
-    const { marka = "", model = "", arizaKodu = "", belirti = "" } = req.body ?? {};
+    const {
+      marka = "",
+      model = "",
+      arizaKodu = "",
+      belirti = "",
+      fotografBase64 = "",
+      fotografMimeType = "image/jpeg"
+    } = req.body ?? {};
 
-    if (![marka, model, arizaKodu, belirti].some(v => String(v).trim())) {
-      return res.status(400).json({ hata: "Analiz için en az bir bilgi girilmelidir." });
+    // Metin veya fotoğraftan en az biri olmalı
+    const metinBilgisiVar = [
+      marka,
+      model,
+      arizaKodu,
+      belirti
+    ].some(v => String(v).trim());
+
+    const fotografVar =
+      typeof fotografBase64 === "string" &&
+      fotografBase64.trim().length > 0;
+
+    if (!metinBilgisiVar && !fotografVar) {
+      return res.status(400).json({
+        basarili: false,
+        hata: "Analiz için en az bir bilgi girin veya fotoğraf ekleyin."
+      });
     }
 
+    // Güvenlik için desteklenen görsel türlerini sınırla
+    const desteklenenMimeTurleri = [
+      "image/jpeg",
+      "image/png",
+      "image/webp"
+    ];
+
+    const guvenliMimeType =
+      desteklenenMimeTurleri.includes(fotografMimeType)
+        ? fotografMimeType
+        : "image/jpeg";
+
     const prompt = `
-Sen ElektroAsistan adlı CNC bakım ve elektrik arıza uygulamasının teknik arıza analiz asistanısın.
+Sen ElektroAsistan adlı CNC bakım, elektrik ve endüstriyel otomasyon
+arıza uygulamasının teknik yapay zekâ asistanısın.
+
+Kullanıcının verdiği metin bilgilerini ve varsa yüklediği fotoğrafı
+birlikte değerlendir.
 
 KURALLAR:
+
 - Yanıtı Türkçe ver.
-- Marka, model ve arıza kodunu birlikte değerlendir.
-- Emin olmadığın arıza kodunu kesin bilgiymiş gibi uydurma.
-- Aynı kod farklı marka veya modellerde farklı anlama gelebiliyorsa belirt.
-- Teşhis koyduğunu iddia etme; olası nedenleri ve doğrulama adımlarını sırala.
-- Tehlikeli şekilde koruma devrelerini atlatmayı veya enerjili ekipmanda işlem yapmayı önerme.
+- Marka, model, arıza kodu ve belirtileri birlikte değerlendir.
+- Fotoğraf varsa yalnızca fotoğrafta gerçekten görülebilen unsurları değerlendir.
+- Fotoğraftaki hata kodu, alarm mesajı, cihaz etiketi, ekran yazısı,
+  LED durumu veya bağlantı gibi teknik ayrıntıları tespit etmeye çalış.
+- Görüntü net değilse bunu açıkça belirt.
+- Fotoğraftan kesin olarak belirlenemeyen marka, model veya parçayı uydurma.
+- Emin olmadığın arıza kodunu kesin bilgiymiş gibi sunma.
+- Aynı hata kodu farklı marka veya modellerde farklı anlama gelebiliyorsa belirt.
+- Kesin teşhis koyduğunu iddia etme.
+- Olası nedenleri önem sırasına göre belirt.
+- Güvenli doğrulama ve kontrol adımlarını sırala.
+- Tehlikeli şekilde koruma devrelerini atlatmayı önerme.
+- Enerjili ekipmanda tehlikeli işlem yapılmasını önerme.
+- Elektriksel kontrollerde uygun iş güvenliği prosedürlerinin uygulanmasını belirt.
 - Gerektiğinde üreticinin resmi teknik dokümanından doğrulama yapılmasını öner.
 
-Yanıt başlıkları:
+YANIT BAŞLIKLARI:
+
 1. Arıza Özeti
-2. Olası Nedenler
-3. Güvenli Kontrol Adımları
-4. Olası Çözüm Önerileri
-5. Ek Bilgi / Doğrulama Gereksinimi
+
+2. Fotoğrafta Tespit Edilenler
+(Fotoğraf yoksa "Fotoğraf eklenmedi" yaz.)
+
+3. Olası Nedenler
+
+4. Güvenli Kontrol Adımları
+
+5. Olası Çözüm Önerileri
+
+6. Ek Bilgi / Doğrulama Gereksinimi
+
 
 KULLANICI BİLGİLERİ:
+
 Marka: ${marka || "Belirtilmedi"}
+
 Model: ${model || "Belirtilmedi"}
+
 Arıza kodu: ${arizaKodu || "Belirtilmedi"}
+
 Belirti / açıklama: ${belirti || "Belirtilmedi"}
+
+Fotoğraf: ${fotografVar ? "Kullanıcı tarafından fotoğraf eklendi." : "Fotoğraf eklenmedi."}
 `.trim();
 
-    const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    // Gemini'ye gönderilecek parçalar
+    const parts = [
+      {
+        text: prompt
+      }
+    ];
+
+    // Fotoğraf varsa Gemini isteğine ekle
+    if (fotografVar) {
+      parts.push({
+        inlineData: {
+          mimeType: guvenliMimeType,
+          data: fotografBase64
+        }
+      });
+    }
+
+    const modelName =
+      process.env.GEMINI_MODEL ||
+      "gemini-2.5-flash";
+
     const url =
-      `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`;
+      `https://generativelanguage.googleapis.com/v1beta/models/` +
+      `${modelName}:generateContent?key=` +
+      `${encodeURIComponent(process.env.GEMINI_API_KEY)}`;
 
     const geminiResponse = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+
+      headers: {
+        "Content-Type": "application/json"
+      },
+
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
+        contents: [
+          {
+            parts: parts
+          }
+        ],
+
         generationConfig: {
           temperature: 0.2,
-          maxOutputTokens: 1800
+          maxOutputTokens: 2000
         }
       })
     });
 
-    const data = await geminiResponse.json();
+    // Önce düz metin olarak oku.
+    // Gemini bazen JSON olmayan bir hata döndürürse backend çökmesin.
+    const rawResponse =
+      await geminiResponse.text();
 
-    if (!geminiResponse.ok) {
-      console.error("Gemini API hatası:", data);
-      return res.status(geminiResponse.status).json({
+    let data;
+
+    try {
+      data = JSON.parse(rawResponse);
+    } catch (e) {
+      console.error(
+        "Gemini JSON olmayan cevap:",
+        rawResponse
+      );
+
+      return res.status(502).json({
         basarili: false,
-        hata: data?.error?.message || "Gemini API isteği başarısız oldu."
+        hata: "Gemini servisinden geçersiz bir yanıt alındı."
       });
     }
 
-    const analiz = data?.candidates?.[0]?.content?.parts
-      ?.map(part => part.text || "")
-      .join("")
-      .trim();
+    // Gemini API hatası
+    if (!geminiResponse.ok) {
+      console.error(
+        "Gemini API hatası:",
+        data
+      );
+
+      return res
+        .status(geminiResponse.status)
+        .json({
+          basarili: false,
+
+          hata:
+            data?.error?.message ||
+            "Gemini API isteği başarısız oldu."
+        });
+    }
+
+    // Analiz metnini birleştir
+    const analiz =
+      data?.candidates?.[0]?.content?.parts
+        ?.map(part => part.text || "")
+        .join("")
+        .trim();
 
     if (!analiz) {
       return res.status(502).json({
@@ -89,18 +222,38 @@ Belirti / açıklama: ${belirti || "Belirtilmedi"}
       });
     }
 
-    res.json({ basarili: true, analiz });
+    // Android uygulamasına sonucu gönder
+    return res.json({
+      basarili: true,
+      analiz: analiz
+    });
+
   } catch (error) {
-    console.error("Backend hatası:", error);
-    res.status(500).json({
+    console.error(
+      "Backend hatası:",
+      error
+    );
+
+    return res.status(500).json({
       basarili: false,
-      hata: "Yapay zekâ analizi sırasında bir hata oluştu.",
-      detay: process.env.NODE_ENV === "development" ? error?.message : undefined
+
+      hata:
+        "Yapay zekâ analizi sırasında bir hata oluştu.",
+
+      detay:
+        process.env.NODE_ENV === "development"
+          ? error?.message
+          : undefined
     });
   }
 });
 
-const PORT = process.env.PORT || 3000;
+// SUNUCU
+const PORT =
+  process.env.PORT || 3000;
+
 app.listen(PORT, () => {
-  console.log(`ElektroAsistan Gemini Backend: http://localhost:${PORT}`);
+  console.log(
+    `ElektroAsistan Gemini Backend: http://localhost:${PORT}`
+  );
 });
