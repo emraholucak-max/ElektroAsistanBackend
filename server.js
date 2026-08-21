@@ -33,10 +33,11 @@ app.post("/api/ariza-analiz", async (req, res) => {
       arizaKodu = "",
       belirti = "",
       fotografBase64 = "",
-      fotografMimeType = "image/jpeg"
+      fotografMimeType = "image/jpeg",
+      projeGorselBase64 = "",
+      projeGorselMimeType = "image/jpeg"
     } = req.body ?? {};
 
-    // Metin veya fotoğraftan en az biri olmalı
     const metinBilgisiVar = [
       marka,
       model,
@@ -48,6 +49,10 @@ app.post("/api/ariza-analiz", async (req, res) => {
       typeof fotografBase64 === "string" &&
       fotografBase64.trim().length > 0;
 
+    const projeGorselVar =
+      typeof projeGorselBase64 === "string" &&
+      projeGorselBase64.trim().length > 0;
+
     if (!metinBilgisiVar && !fotografVar) {
       return res.status(400).json({
         basarili: false,
@@ -55,7 +60,6 @@ app.post("/api/ariza-analiz", async (req, res) => {
       });
     }
 
-    // Güvenlik için desteklenen görsel türlerini sınırla
     const desteklenenMimeTurleri = [
       "image/jpeg",
       "image/png",
@@ -75,61 +79,32 @@ Kullanıcının verdiği metin bilgilerini ve varsa yüklediği fotoğrafı
 birlikte değerlendir.
 
 KURALLAR:
-
 - Yanıtı Türkçe ver.
 - Marka, model, arıza kodu ve belirtileri birlikte değerlendir.
 - Fotoğraf varsa yalnızca fotoğrafta gerçekten görülebilen unsurları değerlendir.
-- Fotoğraftaki hata kodu, alarm mesajı, cihaz etiketi, ekran yazısı,
-  LED durumu veya bağlantı gibi teknik ayrıntıları tespit etmeye çalış.
-- Görüntü net değilse bunu açıkça belirt.
-- Fotoğraftan kesin olarak belirlenemeyen marka, model veya parçayı uydurma.
-- Emin olmadığın arıza kodunu kesin bilgiymiş gibi sunma.
-- Aynı hata kodu farklı marka veya modellerde farklı anlama gelebiliyorsa belirt.
 - Kesin teşhis koyduğunu iddia etme.
 - Olası nedenleri önem sırasına göre belirt.
 - Güvenli doğrulama ve kontrol adımlarını sırala.
-- Tehlikeli şekilde koruma devrelerini atlatmayı önerme.
-- Enerjili ekipmanda tehlikeli işlem yapılmasını önerme.
 - Elektriksel kontrollerde uygun iş güvenliği prosedürlerinin uygulanmasını belirt.
-- Gerektiğinde üreticinin resmi teknik dokümanından doğrulama yapılmasını öner.
 
 YANIT BAŞLIKLARI:
-
 1. Arıza Özeti
-
 2. Fotoğrafta Tespit Edilenler
-(Fotoğraf yoksa "Fotoğraf eklenmedi" yaz.)
-
 3. Olası Nedenler
-
 4. Güvenli Kontrol Adımları
-
 5. Olası Çözüm Önerileri
-
 6. Ek Bilgi / Doğrulama Gereksinimi
 
-
 KULLANICI BİLGİLERİ:
-
 Marka: ${marka || "Belirtilmedi"}
-
 Model: ${model || "Belirtilmedi"}
-
 Arıza kodu: ${arizaKodu || "Belirtilmedi"}
-
 Belirti / açıklama: ${belirti || "Belirtilmedi"}
-
 Fotoğraf: ${fotografVar ? "Kullanıcı tarafından fotoğraf eklendi." : "Fotoğraf eklenmedi."}
 `.trim();
 
-    // Gemini'ye gönderilecek parçalar
-    const parts = [
-      {
-        text: prompt
-      }
-    ];
+    const parts = [{ text: prompt }];
 
-    // Fotoğraf varsa Gemini isteğine ekle
     if (fotografVar) {
       parts.push({
         inlineData: {
@@ -139,81 +114,49 @@ Fotoğraf: ${fotografVar ? "Kullanıcı tarafından fotoğraf eklendi." : "Foto�
       });
     }
 
-    const modelName =
-      process.env.GEMINI_MODEL ||
-      "gemini-2.5-flash";
+    if (projeGorselVar) {
+      parts.push({
+        text: "Aşağıdaki görüntü, kullanıcının makinesine ait elektrik/hidrolik proje şemalarının ilgili sayfalarının birleşimidir. Arızayla ilişkili olabilecek bileşenleri analiz et."
+      });
+      parts.push({
+        inlineData: {
+          mimeType: projeGorselMimeType,
+          data: projeGorselBase64
+        }
+      });
+    }
 
-    const url =
-      `https://generativelanguage.googleapis.com/v1beta/models/` +
-      `${modelName}:generateContent?key=` +
-      `${encodeURIComponent(process.env.GEMINI_API_KEY)}`;
+    const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`;
 
     const geminiResponse = await fetch(url, {
       method: "POST",
-
-      headers: {
-        "Content-Type": "application/json"
-      },
-
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [
-          {
-            parts: parts
-          }
-        ],
-
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 2000
-        }
+        contents: [{ parts: parts }],
+        generationConfig: { temperature: 0.2, maxOutputTokens: 2000 }
       })
     });
 
-    // Önce düz metin olarak oku.
-    // Gemini bazen JSON olmayan bir hata döndürürse backend çökmesin.
-    const rawResponse =
-      await geminiResponse.text();
-
+    const rawResponse = await geminiResponse.text();
     let data;
-
     try {
       data = JSON.parse(rawResponse);
     } catch (e) {
-      console.error(
-        "Gemini JSON olmayan cevap:",
-        rawResponse
-      );
-
       return res.status(502).json({
         basarili: false,
         hata: "Gemini servisinden geçersiz bir yanıt alındı."
       });
     }
 
-    // Gemini API hatası
     if (!geminiResponse.ok) {
-      console.error(
-        "Gemini API hatası:",
-        data
-      );
-
-      return res
-        .status(geminiResponse.status)
-        .json({
-          basarili: false,
-
-          hata:
-            data?.error?.message ||
-            "Gemini API isteği başarısız oldu."
-        });
+      return res.status(geminiResponse.status).json({
+        basarili: false,
+        hata: data?.error?.message || "Gemini API isteği başarısız oldu."
+      });
     }
 
-    // Analiz metnini birleştir
-    const analiz =
-      data?.candidates?.[0]?.content?.parts
-        ?.map(part => part.text || "")
-        .join("")
-        .trim();
+    const analiz = data?.candidates?.[0]?.content?.parts?.map(part => part.text || "").join("").trim();
 
     if (!analiz) {
       return res.status(502).json({
@@ -222,38 +165,94 @@ Fotoğraf: ${fotografVar ? "Kullanıcı tarafından fotoğraf eklendi." : "Foto�
       });
     }
 
-    // Android uygulamasına sonucu gönder
     return res.json({
       basarili: true,
       analiz: analiz
     });
 
   } catch (error) {
-    console.error(
-      "Backend hatası:",
-      error
-    );
-
     return res.status(500).json({
       basarili: false,
-
-      hata:
-        "Yapay zekâ analizi sırasında bir hata oluştu.",
-
-      detay:
-        process.env.NODE_ENV === "development"
-          ? error?.message
-          : undefined
+      hata: "Yapay zekâ analizi sırasında bir hata oluştu."
     });
   }
 });
 
-// SUNUCU
-const PORT =
-  process.env.PORT || 3000;
+// ARIZA CANLI SOHBET (YENİ EKLENEN GERÇEK SOHBET UÇ NOKTASI)
+app.post("/api/ariza-sohbet", async (req, res) => {
+  try {
+    const { mesajGecmisi = [], yeniMesaj = "" } = req.body ?? {};
 
+    if (!yeniMesaj.trim()) {
+      return res.status(400).json({
+        basarili: false,
+        hata: "Gönderilecek mesaj boş olamaz."
+      });
+    }
+
+    const contents = mesajGecmisi.map(m => ({
+      role: m.gonderenAI ? "model" : "user",
+      parts: [{ text: m.icerik }]
+    }));
+
+    contents.push({
+      role: "user",
+      parts: [{ text: yeniMesaj }]
+    });
+
+    const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`;
+
+    const geminiResponse = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: contents,
+        generationConfig: { temperature: 0.3, maxOutputTokens: 1500 }
+      })
+    });
+
+    const rawResponse = await geminiResponse.text();
+    let data;
+    try {
+      data = JSON.parse(rawResponse);
+    } catch (e) {
+      return res.status(502).json({
+        basarili: false,
+        hata: "Gemini servisinden geçersiz yanıt alındı."
+      });
+    }
+
+    if (!geminiResponse.ok) {
+      return res.status(geminiResponse.status).json({
+        basarili: false,
+        hata: data?.error?.message || "Gemini API isteği başarısız oldu."
+      });
+    }
+
+    const cevap = data?.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("").trim();
+
+    if (!cevap) {
+      return res.status(502).json({
+        basarili: false,
+        hata: "Gemini'den yanıt alınamadı."
+      });
+    }
+
+    return res.json({
+      basarili: true,
+      cevap: cevap
+    });
+
+  } catch (error) {
+    return res.status(500).json({
+      basarili: false,
+      hata: "Sohbet sırasında bir hata oluştu."
+    });
+  }
+});
+
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(
-    `ElektroAsistan Gemini Backend: http://localhost:${PORT}`
-  );
+  console.log(`ElektroAsistan Gemini Backend: http://localhost:${PORT}`);
 });
