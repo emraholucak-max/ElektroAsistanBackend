@@ -7,8 +7,6 @@ dotenv.config();
 const app = express();
 
 app.use(cors());
-
-// Fotoğraf Base64 olarak geleceği için limiti yükselttik.
 app.use(express.json({ limit: "15mb" }));
 
 if (!process.env.GEMINI_API_KEY) {
@@ -16,7 +14,6 @@ if (!process.env.GEMINI_API_KEY) {
   process.exit(1);
 }
 
-// Backend kontrol adresi
 app.get("/", (req, res) => {
   res.json({
     durum: "ok",
@@ -38,45 +35,20 @@ app.post("/api/ariza-analiz", async (req, res) => {
       projeGorselMimeType = "image/jpeg"
     } = req.body ?? {};
 
-    const metinBilgisiVar = [
-      marka,
-      model,
-      arizaKodu,
-      belirti
-    ].some(v => String(v).trim());
-
-    const fotografVar =
-      typeof fotografBase64 === "string" &&
-      fotografBase64.trim().length > 0;
-
-    const projeGorselVar =
-      typeof projeGorselBase64 === "string" &&
-      projeGorselBase64.trim().length > 0;
+    const metinBilgisiVar = [marka, model, arizaKodu, belirti].some(v => String(v).trim());
+    const fotografVar = typeof fotografBase64 === "string" && fotografBase64.trim().length > 0;
+    const projeGorselVar = typeof projeGorselBase64 === "string" && projeGorselBase64.trim().length > 0;
 
     if (!metinBilgisiVar && !fotografVar) {
-      return res.status(400).json({
-        basarili: false,
-        hata: "Analiz için en az bir bilgi girin veya fotoğraf ekleyin."
-      });
+      return res.status(400).json({ basarili: false, hata: "Analiz için en az bir bilgi girin veya fotoğraf ekleyin." });
     }
 
-    const desteklenenMimeTurleri = [
-      "image/jpeg",
-      "image/png",
-      "image/webp"
-    ];
-
-    const guvenliMimeType =
-      desteklenenMimeTurleri.includes(fotografMimeType)
-        ? fotografMimeType
-        : "image/jpeg";
+    const desteklenenMimeTurleri = ["image/jpeg", "image/png", "image/webp"];
+    const guvenliMimeType = desteklenenMimeTurleri.includes(fotografMimeType) ? fotografMimeType : "image/jpeg";
 
     const prompt = `
-Sen ElektroAsistan adlı CNC bakım, elektrik ve endüstriyel otomasyon
-arıza uygulamasının teknik yapay zekâ asistanısın.
-
-Kullanıcının verdiği metin bilgilerini ve varsa yüklediği fotoğrafı
-birlikte değerlendir.
+Sen ElektroAsistan adlı CNC bakım, elektrik ve endüstriyel otomasyon arıza uygulamasının teknik yapay zekâ asistanısın.
+Kullanıcının verdiği metin bilgilerini ve varsa yüklediği fotoğrafı birlikte değerlendir.
 
 KURALLAR:
 - Yanıtı Türkçe ver.
@@ -106,24 +78,12 @@ Fotoğraf: ${fotografVar ? "Kullanıcı tarafından fotoğraf eklendi." : "Foto�
     const parts = [{ text: prompt }];
 
     if (fotografVar) {
-      parts.push({
-        inlineData: {
-          mimeType: guvenliMimeType,
-          data: fotografBase64
-        }
-      });
+      parts.push({ inlineData: { mimeType: guvenliMimeType, data: fotografBase64 } });
     }
 
     if (projeGorselVar) {
-      parts.push({
-        text: "Aşağıdaki görüntü, kullanıcının makinesine ait elektrik/hidrolik proje şemalarının ilgili sayfalarının birleşimidir. Arızayla ilişkili olabilecek bileşenleri analiz et."
-      });
-      parts.push({
-        inlineData: {
-          mimeType: projeGorselMimeType,
-          data: projeGorselBase64
-        }
-      });
+      parts.push({ text: "Aşağıdaki görüntü, kullanıcının makinesine ait elektrik/hidrolik proje şemalarının ilgili sayfalarının birleşimidir. Arızayla ilişkili olabilecek bileşenleri analiz et." });
+      parts.push({ inlineData: { mimeType: projeGorselMimeType, data: projeGorselBase64 } });
     }
 
     const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
@@ -143,42 +103,93 @@ Fotoğraf: ${fotografVar ? "Kullanıcı tarafından fotoğraf eklendi." : "Foto�
     try {
       data = JSON.parse(rawResponse);
     } catch (e) {
-      return res.status(502).json({
-        basarili: false,
-        hata: "Gemini servisinden geçersiz bir yanıt alındı."
-      });
+      return res.status(502).json({ basarili: false, hata: "Gemini servisinden geçersiz bir yanıt alındı." });
     }
 
     if (!geminiResponse.ok) {
-      return res.status(geminiResponse.status).json({
-        basarili: false,
-        hata: data?.error?.message || "Gemini API isteği başarısız oldu."
-      });
+      return res.status(geminiResponse.status).json({ basarili: false, hata: data?.error?.message || "Gemini API isteği başarısız oldu." });
     }
 
     const analiz = data?.candidates?.[0]?.content?.parts?.map(part => part.text || "").join("").trim();
-
     if (!analiz) {
-      return res.status(502).json({
-        basarili: false,
-        hata: "Gemini'den analiz metni alınamadı."
-      });
+      return res.status(502).json({ basarili: false, hata: "Gemini'den analiz metni alınamadı." });
     }
 
-    return res.json({
-      basarili: true,
-      analiz: analiz
-    });
-
+    return res.json({ basarili: true, analiz: analiz });
   } catch (error) {
-    return res.status(500).json({
-      basarili: false,
-      hata: "Yapay zekâ analizi sırasında bir hata oluştu."
-    });
+    return res.status(500).json({ basarili: false, hata: "Yapay zekâ analizi sırasında bir hata oluştu." });
   }
 });
 
-// SUNUCU
+// ARIZA CANLI SOHBET (404 Hatasını Çözen Doğru Rota)
+app.post("/api/ariza-sohbet", async (req, res) => {
+  try {
+    const { mesajGecmisi = [], yeniMesaj = "", ilkAnaliz = "" } = req.body ?? {};
+
+    if (!yeniMesaj.trim()) {
+      return res.status(400).json({ basarili: false, hata: "Gönderilecek mesaj boş olamaz." });
+    }
+
+    const contents = [];
+
+    if (ilkAnaliz.trim()) {
+      contents.push({
+        role: "user",
+        parts: [{ text: `Aşağıdaki metin, bu arıza hakkında yapılan ilk teknik analiz raporudur:\n\n${ilkAnaliz}\n\nLütfen sonraki tüm sorularımı bu analize dayanarak ve teknik bir uzman olarak yanıtla.` }]
+      });
+      contents.push({
+        role: "model",
+        parts: [{ text: "Anladım. Arıza analiz raporunu ve detaylarını inceledim. Süreçte size yardımcı olmaya hazırım." }]
+      });
+    }
+
+    mesajGecmisi.forEach(m => {
+      contents.push({
+        role: m.gonderenAI ? "model" : "user",
+        parts: [{ text: m.icerik }]
+      });
+    });
+
+    contents.push({
+      role: "user",
+      parts: [{ text: yeniMesaj }]
+    });
+
+    const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`;
+
+    const geminiResponse = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: contents,
+        generationConfig: { temperature: 0.3, maxOutputTokens: 1500 }
+      })
+    });
+
+    const rawResponse = await geminiResponse.text();
+    let data;
+    try {
+      data = JSON.parse(rawResponse);
+    } catch (e) {
+      return res.status(502).json({ basarili: false, hata: "Gemini servisinden geçersiz yanıt alındı." });
+    }
+
+    if (!geminiResponse.ok) {
+      return res.status(geminiResponse.status).json({ basarili: false, hata: data?.error?.message || "Gemini API isteği başarısız oldu." });
+    }
+
+    const cevap = data?.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("").trim();
+    if (!cevap) {
+      return res.status(502).json({ basarili: false, hata: "Gemini'den yanıt alınamadı." });
+    }
+
+    return res.json({ basarili: true, cevap: cevap });
+  } catch (error) {
+    return res.status(500).json({ basarili: false, hata: "Sohbet sırasında bir hata oluştu." });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`ElektroAsistan Gemini Backend: http://localhost:${PORT}`);
