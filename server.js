@@ -8,7 +8,7 @@ const app = express();
 
 app.use(cors());
 
-// Fotoğraf Base64 olarak geleceği için limiti yükselttik.
+// Fotoğraf Base64 olarak geleceği için limiti yüksek tutuyoruz.
 app.use(express.json({ limit: "15mb" }));
 
 if (!process.env.GEMINI_API_KEY) {
@@ -178,10 +178,10 @@ Fotoğraf: ${fotografVar ? "Kullanıcı tarafından fotoğraf eklendi." : "Foto�
   }
 });
 
-// ARIZA CANLI SOHBET (YENİ EKLENEN GERÇEK SOHBET UÇ NOKTASI)
+// ARIZA CANLI SOHBET (Hafızalı - İlk Analizi Bağlama Özellikli)
 app.post("/api/ariza-sohbet", async (req, res) => {
   try {
-    const { mesajGecmisi = [], yeniMesaj = "" } = req.body ?? {};
+    const { mesajGecmisi = [], yeniMesaj = "", ilkAnaliz = "" } = req.body ?? {};
 
     if (!yeniMesaj.trim()) {
       return res.status(400).json({
@@ -190,11 +190,29 @@ app.post("/api/ariza-sohbet", async (req, res) => {
       });
     }
 
-    const contents = mesajGecmisi.map(m => ({
-      role: m.gonderenAI ? "model" : "user",
-      parts: [{ text: m.icerik }]
-    }));
+    const contents = [];
 
+    // Eğer ilk analiz metni varsa, yapay zekaya konuyu hatırlatmak için en başa ekliyoruz
+    if (ilkAnaliz.trim()) {
+      contents.push({
+        role: "user",
+        parts: [{ text: `Aşağıdaki metin, bu arıza hakkında yapılan ilk teknik analiz raporudur:\n\n${ilkAnaliz}\n\nLütfen sonraki tüm sorularımı ve yazacaklarımı bu analize dayanarak ve teknik bir uzman olarak yanıtla.` }]
+      });
+      contents.push({
+        role: "model",
+        parts: [{ text: "Anladım. Arıza analiz raporunu ve detaylarını inceledim. Adım adım kontrol ve arıza arama sürecinde size yardımcı olmaya hazırım." }]
+      });
+    }
+
+    // Kullanıcının daha önceki sohbet geçmişini ekliyoruz
+    mesajGecmisi.forEach(m => {
+      contents.push({
+        role: m.gonderenAI ? "model" : "user",
+        parts: [{ text: m.icerik }]
+      });
+    });
+
+    // Yeni kullanıcı mesajını ekliyoruz
     contents.push({
       role: "user",
       parts: [{ text: yeniMesaj }]
